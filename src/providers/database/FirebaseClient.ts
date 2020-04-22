@@ -173,6 +173,55 @@ export class FirebaseClient implements IFirebaseClient {
       data: returnData
     };
   }
+  public async apiSoftDelete(
+    resourceName: string,
+    params: messageTypes.IParamsUpdate
+  ): Promise<messageTypes.IResponseUpdate> {
+    const id = params.id;
+    const r = await this.tryGetResource(resourceName);
+    log("apiSoftDelete", { resourceName, resource: r, params });
+    const docObj = { deleted: true };
+    await this.addUpdatedByFields(docObj);
+    r.collection
+      .doc(id)
+      .update(docObj)
+      .catch(error => {
+        logError("apiSoftDelete error", { error });
+      });
+    return {
+      data: {
+        ...params.previousData,
+        id: id
+      },
+    };
+  }
+  public async apiSoftDeleteMany(
+    resourceName: string,
+    params: messageTypes.IParamsUpdateMany
+  ): Promise<messageTypes.IResponseUpdateMany> {
+    const r = await this.tryGetResource(resourceName);
+    log("apiSoftDeleteMany", { resourceName, resource: r, params });
+    const ids = params.ids;
+    const returnData = await Promise.all(
+      ids.map(async id => {
+        const docObj = { deleted: true };
+        await this.addUpdatedByFields(docObj);
+        r.collection
+          .doc(id)
+          .update(docObj)
+          .catch(error => {
+            logError("apiSoftDeleteMany error", { error });
+          });
+        return {
+          ...params.data,
+          id: id
+        };
+      })
+    );
+    return {
+      data: returnData
+    };
+  }
   public async apiDelete(
     resourceName: string,
     params: messageTypes.IParamsDelete
@@ -219,8 +268,9 @@ export class FirebaseClient implements IFirebaseClient {
     const matches = matchDocSnaps.map(snap => {
       return { ...snap.data(), id: snap.id };
     });
+    const permittedData = this.options.softDelete ? matches.filter(row => !row['deleted']) : matches;
     return {
-      data: matches
+      data: permittedData
     };
   }
   public async apiGetManyReference(
@@ -233,18 +283,19 @@ export class FirebaseClient implements IFirebaseClient {
     const targetField = params.target;
     const targetValue = params.id;
     const matches = data.filter(val => val[targetField] === targetValue);
+    const permittedData = this.options.softDelete ? matches.filter(row => !row['deleted']) : matches;
     if (params.sort != null) {
       const { field, order } = params.sort;
       if (order === "ASC") {
-        sortArray(matches, field, "asc");
+        sortArray(permittedData, field, "asc");
       } else {
-        sortArray(matches, field, "desc");
+        sortArray(permittedData, field, "desc");
       }
     }
     const pageStart = (params.pagination.page - 1) * params.pagination.perPage;
     const pageEnd = pageStart + params.pagination.perPage;
-    const dataPage = matches.slice(pageStart, pageEnd);
-    const total = matches.length;
+    const dataPage = permittedData.slice(pageStart, pageEnd);
+    const total = permittedData.length;
     return { data: dataPage, total };
   }
   private async tryGetResource(
@@ -263,6 +314,14 @@ export class FirebaseClient implements IFirebaseClient {
     const user = await this.rm.getUserLogin();
     if (user) {
       return user.email;
+    } else {
+      return "annonymous user";
+    }
+  }
+  private async getCurrentUserId() {
+    const user = await this.rm.getUserLogin();
+    if (user) {
+      return user.uid;
     } else {
       return "annonymous user";
     }
@@ -316,18 +375,58 @@ export class FirebaseClient implements IFirebaseClient {
     if (this.options.disableMeta) {
       return;
     }
-    const currentUserEmail = await this.getCurrentUserEmail();
-    obj.createdate = this.fireWrapper.serverTimestamp();
-    obj.createdby = currentUserEmail;
+    const currentUserIdentifier = this.options.associateUsersById ? await this.getCurrentUserId() : await this.getCurrentUserEmail();
+    switch (this.options.metaFieldCasing) {
+      case 'camel':
+        obj.createDate = this.fireWrapper.serverTimestamp();
+        obj.createdBy = currentUserIdentifier;
+        break;
+      case 'snake':
+        obj.create_date = this.fireWrapper.serverTimestamp();
+        obj.created_by = currentUserIdentifier;
+        break;
+      case 'pascal':
+        obj.CreateDate = this.fireWrapper.serverTimestamp();
+        obj.CreatedBy = currentUserIdentifier;
+        break;
+      case 'kebab':
+        obj['create-date'] = this.fireWrapper.serverTimestamp();
+        obj['created-by'] = currentUserIdentifier;
+        break;
+      default:
+        obj.createdate = this.fireWrapper.serverTimestamp();
+        obj.createdby = currentUserIdentifier;
+        break;
+    }
   }
 
   private async addUpdatedByFields(obj: any) {
     if (this.options.disableMeta) {
       return;
     }
-    const currentUserEmail = await this.getCurrentUserEmail();
-    obj.lastupdate = this.fireWrapper.serverTimestamp();
-    obj.updatedby = currentUserEmail;
+    const currentUserIdentifier = this.options.associateUsersById ? await this.getCurrentUserId() : await this.getCurrentUserEmail();
+    switch (this.options.metaFieldCasing) {
+      case 'camel':
+        obj.lastUpdate = this.fireWrapper.serverTimestamp();
+        obj.updatedBy = currentUserIdentifier;
+        break;
+      case 'snake':
+        obj.last_update = this.fireWrapper.serverTimestamp();
+        obj.updated_by = currentUserIdentifier;
+        break;
+      case 'pascal':
+        obj.LastUpdate = this.fireWrapper.serverTimestamp();
+        obj.UpdatedBy = currentUserIdentifier;
+        break;
+      case 'kebab':
+        obj['last-update'] = this.fireWrapper.serverTimestamp();
+        obj['updated-by'] = currentUserIdentifier;
+        break;
+      default:
+        obj.lastupdate = this.fireWrapper.serverTimestamp();
+        obj.updatedby = currentUserIdentifier;
+        break;
+    }
   }
 
   private async parseDataField(ref: any, docPath: string, fieldPath: string) {

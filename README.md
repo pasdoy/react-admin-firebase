@@ -15,6 +15,7 @@ A firebase data provider for the [React-Admin](https://github.com/marmelab/react
 - [x] Firestore Dataprovider _(details below)_
 - [x] Firebase AuthProvider (email, password)
 - [x] Login with: Google, Facebook, Github etc... [(Example Here)](https://github.com/benwinding/react-admin-firebase/blob/master/src-demo/src/CustomLoginPage.js)
+- [x] Forgot password button... [(Example Here)](https://github.com/benwinding/react-admin-firebase/blob/master/src-demo/src/CustomForgotPassword.js)
 - [x] Firebase storage upload functionality
 
 _Pull requests welcome!!_
@@ -82,7 +83,14 @@ const options = {
   // Disable the metadata; 'createdate', 'lastupdate', 'createdby', 'updatedby'
   disableMeta: false,
   // Prevents document from getting the ID field added as a property
-  dontAddIdFieldToDoc: false
+  dontAddIdFieldToDoc: false,
+  // Adds 'deleted' meta field for non-destructive deleting functionality
+  // NOTE: Hides 'deleted' records from list views unless overridden by filtering for {deleted: true} 
+  softDelete: false,
+  // Changes meta fields like 'createdby' and 'updatedby' to store user IDs instead of email addresses
+  associateUsersById: false,
+  // Casing for meta fields like 'createdby' and 'updatedby', defaults to 'lower', options are 'lower' | 'camel' | 'snake' | 'pascal' | 'kebab'
+  metaFieldCasing: 'lower'
 }
 
 const dataProvider = FirebaseDataProvider(config, options);
