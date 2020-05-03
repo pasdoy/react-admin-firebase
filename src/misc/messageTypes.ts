@@ -14,6 +14,7 @@ export namespace messageTypes {
     };
     filter?: {
       collectionQuery?: CollectionQueryType;
+      [fieldName: string]: any;
     };
   }
 
@@ -28,6 +29,7 @@ export namespace messageTypes {
   export interface IParamsCreate {
     data: {
       id?: string;
+      [key: string]: any;
     };
   }
 
@@ -68,7 +70,10 @@ export namespace messageTypes {
       field: string;
       order: string;
     };
-    filter: {};
+    filter?: {
+      collectionQuery?: CollectionQueryType;
+      [fieldName: string]: any;
+    };
   }
 
   // RESPONSES

@@ -9,8 +9,10 @@ import {
   log,
   logError,
   messageTypes,
-  sortArray
+  sortArray,
+  parseDocGetAllUploads,
 } from "../../misc";
+import { set } from 'lodash'
 
 export class FirebaseClient implements IFirebaseClient {
   private db: FirebaseFirestore;
@@ -18,19 +20,22 @@ export class FirebaseClient implements IFirebaseClient {
 
   constructor(
     private fireWrapper: IFirebaseWrapper,
-    private options: RAFirebaseOptions
+    public options: RAFirebaseOptions
   ) {
     this.db = fireWrapper.db();
     this.rm = new ResourceManager(this.fireWrapper, this.options);
   }
+
   public async apiGetList(
     resourceName: string,
     params: messageTypes.IParamsGetList
   ): Promise<messageTypes.IResponseGetList> {
     log("apiGetList", { resourceName, params });
 
-    const collectionQuery = params.filter.collectionQuery;
-    delete params.filter.collectionQuery;
+    const filterSafe = params.filter || {};
+
+    const collectionQuery = filterSafe.collectionQuery;
+    delete filterSafe.collectionQuery;
 
     const r = await this.tryGetResource(
       resourceName,
@@ -46,8 +51,11 @@ export class FirebaseClient implements IFirebaseClient {
         sortArray(data, field, "desc");
       }
     }
-    // @ts-ignore
-    const filteredData = filterArray(data, params.filter);
+    let softDeleted = data;
+    if (this.options.softDelete) {
+      softDeleted = data.filter(doc => !doc['deleted'])
+    }
+    const filteredData = filterArray(softDeleted, filterSafe);
     const pageStart = (params.pagination.page - 1) * params.pagination.perPage;
     const pageEnd = pageStart + params.pagination.perPage;
     const dataPage = filteredData.slice(pageStart, pageEnd);
@@ -157,12 +165,9 @@ export class FirebaseClient implements IFirebaseClient {
         const docObj = { ...data };
         this.checkRemoveIdField(docObj);
         await this.addUpdatedByFields(docObj);
-        r.collection
+        await r.collection
           .doc(id)
           .update(docObj)
-          .catch(error => {
-            logError("apiUpdateMany error", { error });
-          });
         return {
           ...data,
           id: id
@@ -250,9 +255,7 @@ export class FirebaseClient implements IFirebaseClient {
       batch.delete(r.collection.doc(id));
       returnData.push({ id });
     }
-    batch.commit().catch(error => {
-      logError("apiDeleteMany error", { error });
-    });
+    await batch.commit();
     return { data: returnData };
   }
   public async apiGetMany(
@@ -282,8 +285,15 @@ export class FirebaseClient implements IFirebaseClient {
     const data = r.list;
     const targetField = params.target;
     const targetValue = params.id;
-    const matches = data.filter(val => val[targetField] === targetValue);
-    const permittedData = this.options.softDelete ? matches.filter(row => !row['deleted']) : matches;
+    const filterSafe = params.filter || {};
+    let softDeleted = data;
+    if (this.options.softDelete) {
+      softDeleted = data.filter(doc => !doc['deleted'])
+    }
+    const filteredData = filterArray(softDeleted, filterSafe);
+    const targetIdFilter = {}
+    targetIdFilter[targetField] = targetValue;
+    const permittedData = filterArray(filteredData, targetIdFilter);
     if (params.sort != null) {
       const { field, order } = params.sort;
       if (order === "ASC") {
@@ -333,33 +343,11 @@ export class FirebaseClient implements IFirebaseClient {
     }
     const docPath = r.collection.doc(id).path;
 
+    const uploads = parseDocGetAllUploads(data);
     await Promise.all(
-      Object.keys(data).map(async fieldName => {
-        const val = data[fieldName];
-        const isArray = Array.isArray(val);
-        if (isArray) {
-          await Promise.all(
-            (val as []).map((arrayObj, index) => {
-              if (!!val[index] && val[index].hasOwnProperty("rawFile")) {
-                return Promise.all([
-                  this.parseDataField(val[index], docPath, fieldName + index)
-                ]);
-              } else {
-                return Promise.all(
-                  Object.keys(arrayObj).map(arrayObjFieldName => {
-                    const arrayObjVal = arrayObj[arrayObjFieldName];
-                    return this.parseDataField(
-                      arrayObjVal,
-                      docPath,
-                      fieldName + arrayObjFieldName + index
-                    );
-                  })
-                );
-              }
-            })
-          );
-        }
-        await this.parseDataField(val, docPath, fieldName);
+      uploads.map(async (u) => {
+        const link = await this.uploadAndGetLink(u.rawFile, docPath, u.fieldSlashesPath)
+        set(data, u.fieldDotsPath + '.src', link);
       })
     );
     return data;
@@ -427,15 +415,6 @@ export class FirebaseClient implements IFirebaseClient {
         obj.updatedby = currentUserIdentifier;
         break;
     }
-  }
-
-  private async parseDataField(ref: any, docPath: string, fieldPath: string) {
-    const hasRawFile = !!ref && ref.hasOwnProperty("rawFile");
-    if (!hasRawFile) {
-      return;
-    }
-    ref.src = await this.uploadAndGetLink(ref.rawFile, docPath, fieldPath);
-    delete ref.rawFile;
   }
 
   private async uploadAndGetLink(
