@@ -318,10 +318,12 @@ export class FirebaseClient implements IFirebaseClient {
     refresh?: "REFRESH",
     collectionQuery?: messageTypes.CollectionQueryType
   ): Promise<IResource> {
+    const currentUserEmail = await this.getCurrentUserEmail();
+    const collectionQueryt = collection => collection.where("createdby", "==", currentUserEmail);
     if (refresh) {
-      await this.rm.RefreshResource(resourceName, collectionQuery);
+      await this.rm.RefreshResource(resourceName, collectionQueryt);
     }
-    return this.rm.TryGetResourcePromise(resourceName, collectionQuery);
+    return this.rm.TryGetResourcePromise(resourceName, collectionQueryt);
   }
   private async getCurrentUserEmail() {
     const user = await this.rm.getUserLogin();
